@@ -1,113 +1,104 @@
-import yfinance as yf
-import requests
 import time
-from datetime import datetime
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import requests
+from datetime import datetime, timedelta
 import pytz
 from flask import Flask
-import threading
-import os
 
-app = Flask(__name__)
+# ================== TELEGRAM BOT CONFIG ==================
+BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+CHAT_ID = "YOUR_TELEGRAM_CHAT_ID"
+TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-# Telegram bot credentials
-BOT_TOKEN = "8371520648:AAGCXzleUzrbt4u3yE5h9nNGjK_fEM86eJM"
-CHAT_ID = "6280900235"
-
-IST = pytz.timezone('Asia/Kolkata')
-
-# NSE 100 stock list
-symbols = [
-    "ABB.NS","ADANIENSOL.NS","ADANIENT.NS","ADANIGREEN.NS","ADANIPORTS.NS","ADANIPOWER.NS",
-    "AMBUJACEM.NS","APOLLOHOSP.NS","ASIANPAINT.NS","DMART.NS","AXISBANK.NS","BAJAJ-AUTO.NS",
-    "BAJFINANCE.NS","BAJAJFINSV.NS","BAJAJHLDNG.NS","BAJAJHFL.NS","BANKBARODA.NS","BEL.NS",
-    "BPCL.NS","BHARTIARTL.NS","BOSCHLTD.NS","BRITANNIA.NS","CGPOWER.NS","CANBK.NS",
-    "CHOLAFIN.NS","CIPLA.NS","COALINDIA.NS","DLF.NS","DABUR.NS","DIVISLAB.NS","DRREDDY.NS",
-    "EICHERMOT.NS","ETERNAL.NS","GAIL.NS","GODREJCP.NS","GRASIM.NS","HCLTECH.NS","HDFCBANK.NS",
-    "HDFCLIFE.NS","HAVELLS.NS","HEROMOTOCO.NS","HINDALCO.NS","HAL.NS","HINDUNILVR.NS",
-    "HYUNDAI.NS","ICICIBANK.NS","ICICIGI.NS","ICICIPRULI.NS","ITC.NS","INDHOTEL.NS","IOC.NS",
-    "IRFC.NS","INDUSINDBK.NS","NAUKRI.NS","INFY.NS","INDIGO.NS","JSWENERGY.NS","JSWSTEEL.NS",
-    "JINDALSTEL.NS","JIOFIN.NS","KOTAKBANK.NS","LTIM.NS","LT.NS","LICI.NS","LODHA.NS",
-    "M&M.NS","MARUTI.NS","NTPC.NS","NESTLEIND.NS","ONGC.NS","PIDILITIND.NS","PFC.NS",
-    "POWERGRID.NS","PNB.NS","RECLTD.NS","RELIANCE.NS","SBILIFE.NS","MOTHERSON.NS","SHREECEM.NS",
-    "SHRIRAMFIN.NS","SIEMENS.NS","SBIN.NS","SUNPHARMA.NS","SWIGGY.NS","TVSMOTOR.NS",
-    "TCS.NS","TATACONSUM.NS","TATAMOTORS.NS","TATAPOWER.NS","TATASTEEL.NS","TECHM.NS",
-    "TITAN.NS","TORNTPHARM.NS","TRENT.NS","ULTRACEMCO.NS","UNITDSPR.NS","VBL.NS","VEDL.NS",
-    "WIPRO.NS","ZYDUSLIFE.NS"
+# ================== STOCK LIST (TOP 100 NSE) ==================
+STOCKS = [
+    "RELIANCE.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS", "TCS.NS", "LT.NS",
+    "AXISBANK.NS", "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "KOTAKBANK.NS",
+    "WIPRO.NS", "BAJFINANCE.NS", "HCLTECH.NS", "SUNPHARMA.NS", "ADANIGREEN.NS",
+    "ADANIPORTS.NS", "ADANIENT.NS", "ONGC.NS", "TITAN.NS", "POWERGRID.NS",
+    "NTPC.NS", "NESTLEIND.NS", "ULTRACEMCO.NS", "HINDUNILVR.NS", "JSWSTEEL.NS",
+    "BAJAJFINSV.NS", "COALINDIA.NS", "VEDL.NS", "MARUTI.NS", "CIPLA.NS",
+    "HEROMOTOCO.NS", "TECHM.NS", "DRREDDY.NS", "GRASIM.NS", "HDFCLIFE.NS",
+    "SBILIFE.NS", "BRITANNIA.NS", "BPCL.NS", "EICHERMOT.NS", "HAVELLS.NS",
+    "ICICIPRULI.NS", "DIVISLAB.NS", "SHREECEM.NS", "INDUSINDBK.NS",
+    "UPL.NS", "M&M.NS", "ASIANPAINT.NS", "TATAMOTORS.NS", "TATASTEEL.NS",
+    "DLF.NS", "GAIL.NS", "PIDILITIND.NS", "LTIM.NS", "AMBUJACEM.NS",
+    "ACC.NS", "PEL.NS", "BANKBARODA.NS", "PNB.NS", "CANBK.NS", "IDFCFIRSTB.NS",
+    "AUROPHARMA.NS", "TORNTPHARM.NS", "LUPIN.NS", "BANDHANBNK.NS", "MUTHOOTFIN.NS",
+    "BIOCON.NS", "GLENMARK.NS", "APOLLOHOSP.NS", "NAUKRI.NS", "IRCTC.NS",
+    "ZOMATO.NS", "PAYTM.NS", "NYKAA.NS", "POLYCAB.NS", "INDIGO.NS",
+    "MCDOWELL-N.NS", "JUBLFOOD.NS", "COLPAL.NS", "OBEROIRLTY.NS", "BOSCHLTD.NS",
+    "ABB.NS", "SIEMENS.NS", "CONCOR.NS", "HAL.NS", "BEL.NS", "IOC.NS",
+    "INDHOTEL.NS", "TRENT.NS", "DMART.NS", "ASHOKLEY.NS", "MOTHERSON.NS",
+    "TVSMOTOR.NS", "SUPREMEIND.NS", "ALKEM.NS", "CROMPTON.NS", "ESCORTS.NS"
 ]
 
-def send_telegram_message(msg):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    data = {"chat_id": CHAT_ID, "text": msg}
+# ================== FUNCTIONS ==================
+
+def supertrend(df, period=7, multiplier=3):
+    hl2 = (df["High"] + df["Low"]) / 2
+    df["ATR"] = df["High"].rolling(period).max() - df["Low"].rolling(period).min()
+    df["UpperBand"] = hl2 + (multiplier * df["ATR"])
+    df["LowerBand"] = hl2 - (multiplier * df["ATR"])
+    df["ST"] = np.where(df["Close"] > df["UpperBand"], df["LowerBand"], df["UpperBand"])
+    return df
+
+def send_telegram(message):
     try:
-        requests.post(url, data=data)
+        requests.post(TELEGRAM_URL, data={"chat_id": CHAT_ID, "text": message})
     except Exception as e:
-        print(f"Telegram send error: {e}")
+        print("Telegram Error:", e)
 
-def fetch_previous_day(symbol):
-    ticker = yf.Ticker(symbol)
-    hist = ticker.history(period="2d")
-    if len(hist) < 2:
-        return None
-    return hist.iloc[-2]
+def check_signals():
+    ist = pytz.timezone("Asia/Kolkata")
+    now = datetime.now(ist)
 
-def fetch_intraday(symbol, interval="5m"):
-    ticker = yf.Ticker(symbol)
-    data = ticker.history(period="1d", interval=interval)
-    return data
+    for symbol in STOCKS:
+        try:
+            df = yf.download(symbol, interval="15m", period="5d")
+            if df.empty:
+                continue
 
-def calculate_targets(price, direction):
-    targets = []
-    stop_loss_pct = 0.015
-    target_pcts = [0.01, 0.02, 0.03]
-    if direction == "UP":
-        for pct in target_pcts:
-            targets.append(price * (1 + pct))
-        stop_loss = price * (1 - stop_loss_pct)
-    else:
-        for pct in target_pcts:
-            targets.append(price * (1 - pct))
-        stop_loss = price * (1 + stop_loss_pct)
-    return targets, stop_loss
+            df["EMA20"] = df["Close"].ewm(span=20).mean()
+            df["EMA50"] = df["Close"].ewm(span=50).mean()
+            df["Middle"] = df["Close"].rolling(20).mean()
+            df["STD"] = df["Close"].rolling(20).std()
+            df["Upper"] = df["Middle"] + (2 * df["STD"])
+            df["Lower"] = df["Middle"] - (2 * df["STD"])
+            df = supertrend(df)
 
-def check_alerts(symbol):
-    prev_day = fetch_previous_day(symbol)
-    if prev_day is None:
-        return
-    intraday = fetch_intraday(symbol)
-    if intraday.empty:
-        return
-    last_price = intraday['Close'][-1]
-    prev_high = prev_day['High']
-    prev_low = prev_day['Low']
-    if last_price > prev_high:
-        targets, stop_loss = calculate_targets(last_price, "UP")
-        msg = (f"{symbol} BREAKOUT 🚀\nPrice: {last_price:.2f} > High {prev_high:.2f}\n"
-               f"Target1: {targets[0]:.2f}\nTarget2: {targets[1]:.2f}\nTarget3: {targets[2]:.2f}\n"
-               f"Stop Loss: {stop_loss:.2f}\nAction: BUY")
-        send_telegram_message(msg)
-    elif last_price < prev_low:
-        targets, stop_loss = calculate_targets(last_price, "DOWN")
-        msg = (f"{symbol} BREAKDOWN ⚠️\nPrice: {last_price:.2f} < Low {prev_low:.2f}\n"
-               f"Target1: {targets[0]:.2f}\nTarget2: {targets[1]:.2f}\nTarget3: {targets[2]:.2f}\n"
-               f"Stop Loss: {stop_loss:.2f}\nAction: SELL")
-        send_telegram_message(msg)
+            price = df["Close"].iloc[-1]
+            ema20 = df["EMA20"].iloc[-1]
+            ema50 = df["EMA50"].iloc[-1]
+            upper = df["Upper"].iloc[-1]
+            lower = df["Lower"].iloc[-1]
 
-def run_bot():
-    while True:
-        now = datetime.now(IST)
-        if now.weekday() < 5 and now.hour >= 9 and (now.hour < 15 or (now.hour == 15 and now.minute <= 30)):
-            for sym in symbols:
-                check_alerts(sym)
-                time.sleep(1)
-            time.sleep(300)
-        else:
-            time.sleep(600)
+            signal = None
+            if ema20 > ema50 and price > upper:
+                signal = f"🚀 BUY {symbol}\nPrice: {price:.2f}\nTarget: {price*1.02:.2f}\nSL: {price*0.98:.2f}"
+            elif ema20 < ema50 and price < lower:
+                signal = f"⚠️ SELL {symbol}\nPrice: {price:.2f}\nTarget: {price*0.98:.2f}\nSL: {price*1.02:.2f}"
+
+            if signal:
+                send_telegram(signal)
+
+        except Exception as e:
+            print(f"Error for {symbol}: {e}")
+
+# ================== FLASK KEEP-ALIVE ==================
+app = Flask(__name__)
 
 @app.route('/')
 def home():
-    now = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
-    return f"Stock Alert Bot running at {now} IST"
+    return "Stock Alert Bot Running!"
 
 if __name__ == "__main__":
-    threading.Thread(target=run_bot, daemon=True).start()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    while True:
+        ist = pytz.timezone("Asia/Kolkata")
+        now = datetime.now(ist)
+        if 9 <= now.hour < 16 and now.weekday() < 5:
+            check_signals()
+        time.sleep(900)  # every 15 minutes
+                
